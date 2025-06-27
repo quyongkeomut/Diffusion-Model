@@ -115,11 +115,11 @@ Project Title was created by **[Phuoc-Thinh Nguyen](https://github.com/quyongkeo
 ```
 @misc{quyongkeomutVAEs,
   author = {Nguyen, P.-T.},
-  title = {Variational Autoencoders},
+  title = {Diffusion Models},
   year = {2025},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{https://github.com/quyongkeomut/Variational-Autoencoder}}
+  howpublished = {\url{https://github.com/quyongkeomut/Diffusion-Model}}
 }
 ```
 
