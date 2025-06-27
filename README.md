@@ -1,13 +1,12 @@
 # **Denoising Diffusion Probabilistic Models**
 
 [![Static Badge](https://img.shields.io/badge/Python-3.10.14-blue.svg)](https://www.python.org/) 
-[![Static Badge](https://img.shields.io/badge/PyTorch-2.5.1-orange.svg)]([https://www.python.org/](https://pytorch.org/get-started/locally/))
-[![Static Badge](https://img.shields.io/badge/License-Apache2.0-red.svg)]([https://www.python.org/](https://github.com/quyongkeomut/Diffusion-Model/blob/main/LICENSE.md))
+[![Static Badge](https://img.shields.io/badge/PyTorch-2.5.1-orange.svg)](https://pytorch.org/get-started/locally/)
+[![Static Badge](https://img.shields.io/badge/License-Apache2.0-red.svg)](https://github.com/quyongkeomut/Diffusion-Model/blob/main/LICENSE.md)
 
 <!-- **Update 23/06/2025: Added gradient accumulation logic for the training stage** -->
 
-This reposistory is a collection of VAEs (Variational Autoencoder) implemented with PyTorch, which aim to provide a convenient and simple way to work around with available VAEs
-today (still updating). Three main datasets provided are Flowers102, MNIST and FashionMNIST for a consistent comparison in the future.
+This reposistory is a implementation of Denoising Diffusion Probabilistic Model (DDPM) implemented with PyTorch, which aim to provide a convenient and simple way to work around with Diffusion Model. By the time, I will update the Latent Diffusion Model, which is a descendant of DDPM and it works on the latent space instead of image space. Three main datasets provided are Flowers102, MNIST and FashionMNIST for a consistent comparison in the future.
 
 ## **Requirement**
 
@@ -30,14 +29,14 @@ To install, follow these steps:
 Base training arguments and their functionality are provided below:
 
 ```
-python train_vae.py --help
-usage: train_vae.py [-h] [--model MODEL] [--dataset DATASET] [--is_ddp] [--img_size IMG_SIZE] [--epochs EPOCHS] [--batch BATCH] [--lr LR] [--seed SEED]
+python train_diff.py --help
+usage: train_diff.py [-h] [--model MODEL] [--dataset DATASET] [--is_ddp] [--img_size IMG_SIZE] [--epochs EPOCHS] [--batch BATCH] [--lr LR] [--seed SEED]
 
 Training args
 
 options:
   -h, --help           show this help message and exit
-  --model MODEL        Type of model, valid values are one of ['VAE', 'VQ-VAE']
+  --model MODEL        Type of model, valid values are one of ['DDPM', 'LDM']
   --dataset DATASET    Dataset to train model on, valid values are one of ['flowers102', 'mnist', 'fashion_mnist']
   --is_ddp             Option for choosing training in DDP or normal training criteria
   --img_size IMG_SIZE  Image size
@@ -49,18 +48,16 @@ options:
 Along with base arguments, the program can accept extra arguments to provide for model/criterion/optimizer/trainer-dependent keyword arguments. Example is provided below:
 
 ```
-python train_vae.py --prior_weight 1e-3 --reconstruction_method bce --is_ddp
+python train_vae.py --reconstruction_method bce --is_ddp
 ```
-In the example above, -prior_weight is used to assign weight of prior loss of the loss function in VAEs, and --reconstruction_method is used to decide which type of loss function
-to use for the reconstruction loss - in this case is BCE (Binary Cross Entropy), and is only acceptable if the target image is scaled to the range [0, 1]. To run training process, 
-run these line of codes:
+In the example above, --reconstruction_method is used to decide which type of loss function to use for the reconstruction loss - in this case is BCE (Binary Cross Entropy), and is only acceptable if the target image is scaled to the range [0, 1]. To run training process, run these line of codes:
 
 ```
-$ cd Variational-Autoencoder
-$ python train_vae.py # along with extra arguments
+$ cd Diffusion-Model
+$ python train_diff.py # along with extra arguments
 ```
 
-For modifying the backbone of a specific VAE, you can modify the config file template corresponding to the VAE model, which can be found at *./experiment_setup/configs* directory.
+For modifying the backbone of a specific Diffusion Model, you can modify the config file template corresponding to the model, which can be found at *./experiment_setup/configs* directory.
 Each file has the template like this:
 
 ```yaml
@@ -73,18 +70,11 @@ IMG_CHANNELS: 3
 LATENT_DIM: ...
 
 
-ENCODER_CONFIGS:
-  down_channels: [32, 64, 128, 256]
-  expand_factor: 3
-  drop_p: ...
-  activation: "<name of activation>"
-  initializer: "<name of initializer>"
-  dtype: null
-  ...
-
-
-DECODER_CONFIGS: 
-  up_channels: [256, 192, 96, 48, 32]
+BACKBONE_CONFIGS:
+  stages_channels: [32, 64, 128, 256]
+  is_conditional: False
+  T: 100
+  t_embed_dim: 64
   expand_factor: 3
   drop_p: ...
   activation: "<name of activation>"
@@ -102,21 +92,21 @@ OPTIM_KWARGS:
 
 
 LOGGING_KWARGS:
-  save_dir: ./weights/VAE
+  save_dir: ./weights
   ...
 ```
 
 
 ## **Contributing**
 
-Any contribution to the main VAEs are welcomed. If any better model are delivered by fine-tuning the hyperparameters, or by changing the backbone, or by modifying the training 
+Any contribution to the main models are welcomed. If any better model are delivered by fine-tuning the hyperparameters, or by changing the backbone, or by modifying the training 
 procedure, please let me know. It would be a pleasure to include and cite your work in this repository.
 
 If you would like to contribute your model, feel free to submit a Pull Request.
 
 ## **License**
 
-This repository is released under the Apache License 2.9. See the **[LICENSE]()** file for details.
+This repository is released under the Apache License 2.9. See the **[LICENSE](https://github.com/quyongkeomut/Diffusion-Model/blob/main/LICENSE.md)** file for details.
 
 ## **Citation**
 
