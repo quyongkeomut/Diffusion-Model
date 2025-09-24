@@ -1,0 +1,27 @@
+NAME: "DDPM"
+
+
+IMG_CHANNELS: 3
+
+
+LATENT_DIM: 512
+
+
+DENOISE_MODEL_CONFIGS:
+  stages_channels: [32, 64, 128, 256]
+  expand_factor: 2
+  drop_p: 0.1
+  T: 120
+  beta: 0.25
+  t_embed_dim: 32
+  activation: "gelu"
+  base_groups_norm: 4
+  initializer: "he_normal"
+  dtype: null
+
+
+OPTIMIZER_NAME: "adam"
+
+
+OPTIM_KWARGS: 
+  weight_decay: 0

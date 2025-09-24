@@ -1,7 +1,7 @@
 import torch
 
-from neural_nets.denoise_models.unets import UNet, UNetConditional
-from neural_nets.autoencoders.ae import encoder_mobilenet_v3_large, Encoder, Decoder
+from neural_nets.denoise_models.unets import BaseUNetEncoder, BaseUNetDecoder, BaseUNet
+# from neural_nets.autoencoders.ae import encoder_mobilenet_v3_large, Encoder, Decoder
 
 from torchinfo import summary
 
@@ -35,16 +35,24 @@ def test_GFLOPs_thop(
 if __name__ == "__main__":
     
     # UNet
-    # model = UNet(
-    #     img_channels=40,
-    #     down_channels=(64, 112, 128),
-    #     expand_factor=2,
-    #     device="cuda"
-    # )  
-    # input_data = (
-    #     torch.randn((1, 40, 48, 48), device="cuda"), 
-    #     torch.tensor(1, device="cuda")
-    # )
+    model = BaseUNet(
+        img_channels=3,
+        stages_channels=[32, 64, 128, 256],
+        latent_dim=512,
+        T=100,
+        t_embed_dim=128,
+        is_conditional=False,
+        expand_factor=3,
+        drop_p=0.1,
+        activation="relu",
+        initializer="normal",
+        device="cuda",
+        dtype=None
+    )  
+    input_data = (
+        torch.randn((1, 3, 64, 64), device="cuda"), 
+        torch.tensor(1, device="cuda")
+    )
     
     
     # Conditional UNet
@@ -82,21 +90,15 @@ if __name__ == "__main__":
     #     torch.randn((1, 3, 256, 256), device="cuda"), 
     # )
     
+    
     # AE Decoder
-    model = Decoder(
-        img_channels=3,
-        latent_channels=40,
-        up_channels=(32, 24, 16),
-        expand_factor=2,
-        device="cuda"
-    )  
-    input_data = (
-        torch.randn((1, 40, 32, 32), device="cuda"), 
-    )
+    # input_data = (
+    #     torch.randn((1, 3, 64, 64), device="cuda"), 
+    # )
     
     
     # model summary
-    summary(model, input_data=input_data, depth=3)
+    summary(model, input_data=input_data, depth=4)
     
     
     # pytorch op counter - thop

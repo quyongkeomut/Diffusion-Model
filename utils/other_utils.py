@@ -1,77 +1,33 @@
+from typing import List
+from PIL import Image
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
-# from IPython.display import Image
+from IPython.display import HTML
+import numpy as np
+
 import torch
-import torchvision
+from torch import Tensor
+from torch.nn.modules.utils import _pair
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader
 
 
-def save_animation(
-    xs, 
-    gif_name, 
-    interval=300, 
-    repeat_delay=5000
-):
-    fig = plt.figure()
-    plt.axis('off')
-    imgs = []
+def to_image(
+    tensor: Tensor, 
+    to_pil: bool = True
+) -> Tensor | Image.Image:
+    """
+    Transform a tensor into image
 
-    for x_t in xs:
-        im = plt.imshow(x_t, animated=True)
-        imgs.append([im])
+    Args:
+        tensor (Tensor): Input tensor.
+        to_pil (bool, optional): Whether transform it to PIL Image. Defaults to True.
 
-    animate = animation.ArtistAnimation(fig, imgs, interval=interval, repeat_delay=repeat_delay)
-    animate.save(gif_name)
-
-
-def load_fashionMNIST(data_transform, train=True):
-    return torchvision.datasets.FashionMNIST(
-        "./data/",
-        download=True,
-        train=train,
-        transform=data_transform,
-    )
-
-
-def load_transformed_fashionMNIST(img_size, batch_size):
-    data_transforms = [
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),  # Scales data into [0,1]
-        transforms.RandomHorizontalFlip(),
-        transforms.Lambda(lambda t: (t * 2) - 1)  # Scale between [-1, 1]
-    ]
-
-    data_transform = transforms.Compose(data_transforms)
-    train_set = load_fashionMNIST(data_transform, train=True)
-    test_set = load_fashionMNIST(data_transform, train=False)
-    data = torch.utils.data.ConcatDataset([train_set, test_set])
-    dataloader = DataLoader(data, batch_size=batch_size, shuffle=True, drop_last=True)
-    return data, dataloader
-
-
-def show_tensor_image_diff(image: torch.Tensor):
-    reverse_transforms = transforms.Compose([
-        transforms.Lambda(lambda t: (t + 1) / 2),
-        transforms.Lambda(lambda t: torch.minimum(torch.tensor([1]), t)),
-        transforms.Lambda(lambda t: torch.maximum(torch.tensor([0]), t)),
-        transforms.ToPILImage(),
-    ])
-    plt.imshow(reverse_transforms(image[0].detach().cpu()))
-
-
-def show_tensor_image_latent_diff(image: torch.Tensor):
-    reverse_transforms = transforms.Compose([
-        # transforms.Lambda(lambda t: (t + 1) / 2),
-        transforms.Lambda(lambda t: torch.minimum(torch.tensor([1]), t)),
-        transforms.Lambda(lambda t: torch.maximum(torch.tensor([0]), t)),
-        transforms.ToPILImage(),
-    ])
-    plt.imshow(reverse_transforms(image[0].detach().cpu()))
+    Shape:
+        tensor: (C, H, W)
     
-
-def to_image(tensor, to_pil=True):
-    tensor = (tensor + 1) / 2
+    Returns:
+        Image: Output image
+    """
     ones = torch.ones_like(tensor)
     tensor = torch.min(torch.stack([tensor, ones]), 0)[0]
     zeros = torch.zeros_like(tensor)
@@ -81,16 +37,67 @@ def to_image(tensor, to_pil=True):
     return transforms.functional.to_pil_image(tensor)
 
 
-def plot_generated_images(noise, result):
-    plt.figure(figsize=(8,8))
+def show_animation(
+    xs: List[Tensor], 
+    interval=300, 
+    repeat_delay=5000
+):
+    fig = plt.figure()
+    plt.axis('off')
+    imgs = []
+    for x_t in xs:
+        im = plt.imshow(x_t, animated=True)
+        imgs.append([im])
+    ani = animation.ArtistAnimation(fig, imgs, interval=interval, repeat_delay=repeat_delay, blit=True)
+    plt.close(fig)  # Prevent static image from showing
+    return HTML(ani.to_jshtml())  # Or use ani.to_html5_video()
+
+
+def save_animation(
+    xs, 
+    save_path, 
+    interval=300, 
+    repeat_delay=5000,
+    dpi: int = 300
+):
+    # Convert the first PIL image to NumPy to get dimensions
+    width, height = xs[0].size  # PIL gives size as (W, H)
+
+    # Set figure size to exactly match the image size
+    fig = plt.figure(figsize=(width / dpi * 3, height / dpi * 3), dpi=dpi)
+
+    # Axes that fill the entire figure (no borders)
+    ax = plt.axes([0, 0, 1, 1])  # left, bottom, width, height in [0,1]
+    ax.set_axis_off()
+    imgs = []
+    for x_t in xs:
+        arr = np.asarray(x_t)
+        im = ax.imshow(arr, animated=True)
+        imgs.append([im])
+    animate = animation.ArtistAnimation(
+        fig, 
+        imgs, 
+        interval=interval, 
+        repeat_delay=repeat_delay
+    )
+    animate.save(save_path, dpi=dpi)
+
+
+def show_tensor_image(
+    image: Tensor,
+):
+    plt.imshow(image)
+
+
+def plot_generated_images(
+    results,
+    figsize: int = 8
+):
+    plt.figure(figsize=_pair(figsize))
     nrows = 1
-    ncols = 2
-    samples = {
-        "Noise" : noise,
-        "Generated Image" : result
-    }
-    for i, (title, img) in enumerate(samples.items()):
+    ncols = len(results)
+    for i, img in enumerate(results):
         ax = plt.subplot(nrows, ncols, i+1)
-        ax.set_title(title)
-        show_tensor_image_diff(img)
+        ax.set_axis_off()
+        show_tensor_image(img)
     plt.show()

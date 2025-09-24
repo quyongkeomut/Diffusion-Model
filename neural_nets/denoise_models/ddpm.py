@@ -5,7 +5,6 @@ from typing import (
     Optional
 )
 
-import cv2
 import numpy as np
 
 import torch
@@ -14,110 +13,109 @@ from torch import (
     linspace,
     cumprod,
     sqrt,
+    randn,
+    empty,
     randn_like,
+    sigmoid,
     vmap
 )
 from torch.nn import Module
 import torch.nn.functional as F
-from torchvision.transforms import functional as Ft
 from torch.nn.modules.utils import _pair
 
-import matplotlib.pyplot as plt
-
-from neural_nets.denoise_models.unets import _UNetBase
-
-from utils import other_utils
+from utils.other_utils import to_image
 
 
-class DDPM:
+class DDPM(Module):
     def __init__(
         self,
-        model: Type[Module] | None = None,
-        beta: float = 0.02,
-        T: int = 100,
-        device=None,
-        **model_kwargs
-    ):
-        self.img_channels = model_kwargs["img_channels"]
+        denoise_model: Type[Module],
+        T: int,
+        beta: float = 0.25,
+        **kwargs
+    ) -> None:
+        super().__init__()
+        self.img_channels = kwargs['img_channels']
         self.T = T
-        self.device = device
+        self.device = kwargs['device']
+        self.model = denoise_model(**kwargs)
+        self.reconstruction_method = kwargs['reconstruction_method']
         
-        if model is not None:
-            self.model = model
-        else:
-            self.model = _UNetBase(
-                T=T,
-                is_conditional=False,
-                device=device,
-                **model_kwargs
-            )
-            
-        betas = linspace(1e-4, beta, steps=T, device=device) # T time step 1 -> T, but indexed 0 -> T-1 
-        self.sqrt_betas = sqrt(betas)
-        alphas = 1.0 - betas
-        alphas_bar = cumprod(alphas, dim=0)
-        one_minus_alphas = 1.0 - alphas
-        one_minus_alphas_bar = 1.0 - alphas_bar
-        sqrt_one_minus_alphas_bar = sqrt(one_minus_alphas_bar)
+        betas = linspace(0.0, beta, steps=self.T+1, device=self.device).view(self.T+1, 1, 1, 1) # shape (T+1, 1, 1, 1); T time step 0 -> T, 
+        alphas = 1.0 - betas # (T+1, 1, 1, 1); [1, ..., 0.77]
+        alphas_bar = cumprod(alphas, dim=0) # (T+1, 1, 1, 1) ; [1, ..., near 0]
+        one_minus_alphas_bar = 1.0 - alphas_bar # (T+1, 1, 1, 1); [0, ... near 1]
+        self.alphas_bar = alphas_bar
+        self.sqrt_alphas_bar = sqrt(alphas_bar)
+        self.square_betas = betas**2 # (T+1, 1, 1, 1)
+        self.one_minus_alphas_bar = one_minus_alphas_bar
+        self.square_one_minus_alphas_bar = one_minus_alphas_bar**2
+        self.sqrt_one_minus_alphas_bar = sqrt(one_minus_alphas_bar)
         
         # foward diffusion hyperparameters
-        self.diff_mean_coef = sqrt(alphas_bar)
-        self.diff_std = sqrt_one_minus_alphas_bar
-        
-        # forward diff batched function
-        self.q_batched = vmap(
-            self.q, 
-            in_dims=0,
-            out_dims=0, 
-            randomness="different"
-        )
+        self.fw_mean_coef = self.sqrt_alphas_bar # (T+1, 1, 1, 1)
+        self.fw_std = self.sqrt_one_minus_alphas_bar # (T+1, 1, 1, 1)
         
         # reverse diffusion hyperparameters
-        self.noise_coef = one_minus_alphas / sqrt_one_minus_alphas_bar
-        self.inv_sqrt_alphas = sqrt(1.0 / alphas)
-        self.beta_tilde_coef = 1.0 # this is different from the original paper, but in practice it works wells
+        self.x_previous_coef = sqrt(alphas) / one_minus_alphas_bar # (T+1, 1, 1, 1)
+        self.x0_pred_coef = betas / one_minus_alphas_bar # (T+1, 1, 1, 1)
+        self.bw_std = sqrt(betas / one_minus_alphas_bar)
         
-        # sampling (reverse diff) batched function
-        self.reverse_q_batched = vmap(
-            self.reverse_q, 
-            in_dims=0, 
-            out_dims=0,
-            randomness="different"
-        )
+        # forward diff batched function
+        # self.q_batched = vmap(
+        #     self.q, 
+        #     in_dims=0,
+        #     out_dims=0, 
+        #     randomness="different"
+        # )
+        # 
+        # # sampling (reverse diff) batched function
+        # self.reverse_q_batched = vmap(
+        #     self.reverse_q, 
+        #     in_dims=0, 
+        #     out_dims=0,
+        #     randomness="different"
+        # )
         
-    
+        
+    @torch.no_grad
     def q(
         self, 
         x_0: Tensor, 
-        t: Tensor
+        T: Tensor
     ) -> Tuple[Tensor, Tensor]:
         r"""
         Forward diffusion process
 
         Args:
             x_0 (Tensor): Initial latent
-            t (int): Time step at t (shifted to the left, so that t = 0 means it is the step 1)
+            T (int): Time step at t 
 
         Shape:
-            x_0: [N, C, H, W] or [C, H, W]
-            t: [1]
+            x_0: (N, C, H, W)
+            T: (N, )
         
         Returns:
-            Tensor [N, C, H, W] or [C, H, W]: x_t, which is the added noise version of x_0 after t steps
-            Tensor [N, C, H, W] or [C, H, W]: the noise added at step t
+            Tensor (N, C, H, W): x_t, which is the added noise version of x_0 after t steps
+            Tensor (N, C, H, W): the noise added at step t
         """
-        t = t.int()
-        noise = randn_like(x_0)
-        x_t = self.diff_mean_coef[t]*x_0 + self.diff_std[t]*noise
-        return (x_t, noise)
+        T = T.int() # (N, )
+        noise = randn_like(x_0) # (N, C, H, W)
+        mean = self.fw_mean_coef[T] * x_0 # (N, C, H, W)
+        x_t =  mean + self.fw_std[T] * noise
+        return x_t
         
+
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
+    
         
     @torch.no_grad    
     def reverse_q(
         self,
         x_t: Tensor, 
-        t: Tensor,
-        noise_predicted: Tensor 
+        x0_predicted: Tensor,
+        T: Tensor,
     ) -> Tensor:
         """
         Reverse diffusion process. x_t-1 is sampled based on current x_t,
@@ -125,66 +123,84 @@ class DDPM:
 
         Args:
             x_t (Tensor): current sample at time step t
-            t (Tensor): Time step at t (shifted to the right, so that t = 0 means it is the step 1)
+            T (Tensor): Time step at t
             noise_predicted (Tensor): the noise that produce x_t
 
 
         Shape:
-            x_t: [N, C, H, W]
-            t: [1]
-            noise_predicted: [N, C, H, W]
+            x_t: (N, C, H, W)
+            T: (N,)
+            noise_predicted: (N, C, H, W)
 
         Returns:
-            Tensor [N, C, H, W]: x_t-1, the previous sample at time step t 
+            Tensor (N, C, H, W): x_t-1, the previous sample at time step t
         """
-        t = t.int()
-        mean_t_minus_1 = self.inv_sqrt_alphas[t] * (x_t - self.noise_coef[t]*noise_predicted)
-        # if t == 0:
-        #     return mean_t_minus_1
-        # else:
-        #     noise = randn_like(x_t)
-        #     # return mean_t_minus_1 + self.beta_tilde_coef * self.sqrt_betas[t] * noise   
-        #     return mean_t_minus_1 + self.beta_tilde_coef * self.sqrt_betas[t-1] * noise
+        T = T.int() # (N, )
+        mean_previous = (
+            self.one_minus_alphas_bar[T-1] * self.x_previous_coef[T] * x_t 
+            + self.sqrt_alphas_bar[T-1] * self.x0_pred_coef[T] * x0_predicted 
+        ) # (N, C, H, W)
+        noise = randn_like(x0_predicted)
+        return mean_previous + self.sqrt_one_minus_alphas_bar[T-1] * self.bw_std[T] * noise
         
-        noise = randn_like(x_t)
-        return mean_t_minus_1 + self.beta_tilde_coef * self.sqrt_betas[t] * noise
+        
+    @torch.no_grad
+    def sample(
+        self, 
+        N: int, 
+        shape: int| Tuple[int] = (64, 64)
+    ):
+        T = self.T
+        times = empty((N, ), device=self.device, dtype=torch.long).fill_(T)
+        X_T = randn((N, self.img_channels) + _pair(shape), device=self.device) # (N, C, H, W)
+        while T >= 1:
+            X0_pred = self.forward(X_T, times) # (N, C, H, W)
+            if self.reconstruction_method == "bce":
+                X0_pred = sigmoid(X0_pred)
+            X_T = self.reverse_q(X_T, X0_pred, times)
+            T -= 1
+            times -=1
+        
+        X_T = (X_T + 1) / 2 # scale from [-1, 1] to [0, 1]
+        return [to_image(x_0) for x_0 in X_T]
         
     
-    @torch.no_grad
-    def show_translative_image(
-        self,
-        img_size: int | Tuple[int, int] = 256,
-        save_path: str = None,
-    ):
-        img_size = _pair(img_size)
-        # Init noise to generate images from
-        x_t = torch.randn((1, self.img_channels, *img_size), device=self.device) # [N, C, H, W]
+    # @torch.no_grad
+    # def show_translative_image(
+    #     self,
+    #     img_size: int | Tuple[int, int] = 256,
+    #     save_path: str = None,
+    # ):
+    #     img_size = _pair(img_size)
+    #     # Init noise to generate images from
+    #     x_t = torch.randn((1, self.img_channels, *img_size), device=self.device) # [N, C, H, W]
+    #
+    #     plt.figure(figsize=(10, 10))
+    #     n_cols = 10
+    #     hidden_rows = self.T / n_cols
+    #     plot_number = 1
+    #     
+    #     # Go from T to 0 removing and adding noise until t = 0
+    #     self.model.eval()
+    #     for t in range(0, self.T)[::-1]:
+    #         time = torch.full((1, 1), t, device=self.device).float()
+    #         e_t = self.model(x_t, time)  # Predicted noise
+    #         x_t = self.reverse_q(x_t, time[0], e_t)
+    #         if t % hidden_rows == 0:
+    #             ax = plt.subplot(1, n_cols+1, plot_number)
+    #             ax.axis('off')
+    #             other_utils.show_tensor_image_diff(x_t)
+    #             plot_number += 1
+    #
+    #     # save the image
+    #     if save_path is not None:
+    #         plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    #     
+    #     #plot image
+    #     plt.show()
 
-        plt.figure(figsize=(10, 10))
-        n_cols = 10
-        hidden_rows = self.T / n_cols
-        plot_number = 1
-        
-        # Go from T to 0 removing and adding noise until t = 0
-        self.model.eval()
-        for t in range(0, self.T)[::-1]:
-            time = torch.full((1, 1), t, device=self.device).float()
-            e_t = self.model(x_t, time)  # Predicted noise
-            x_t = self.reverse_q(x_t, time[0], e_t)
-            if t % hidden_rows == 0:
-                ax = plt.subplot(1, n_cols+1, plot_number)
-                ax.axis('off')
-                other_utils.show_tensor_image_diff(x_t)
-                plot_number += 1
 
-        # save the image
-        if save_path is not None:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        #plot image
-        plt.show()
-
-
+'''
 class LatentDDPM(DDPM):
     def __init__(
         self,
@@ -368,6 +384,7 @@ class LatentDDPM(DDPM):
         mask = Ft.normalize(mask, mean=mean, std=std)
         
         return mask
+'''
 
 
 

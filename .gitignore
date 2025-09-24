@@ -1,7 +1,7 @@
 data*/
+weights/
 env/
 docs/
-weights/
 __pycache__/
 *.pyc
 *.txt
@@ -13,9 +13,14 @@ __pycache__/
 *.ipynb
 *.log
 *.json
-*.pth
-*.pt
 *.h5
 *.lnk
-_test*
+*test*
+*.pt
+*.pth
+*.zip
 datasets/gen*
+
+# Do not ignore the 'datasets' folder
+!datasets/
+!requirements.txt

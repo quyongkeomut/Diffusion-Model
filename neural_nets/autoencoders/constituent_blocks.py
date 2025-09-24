@@ -1,15 +1,20 @@
+from typing import Callable, Optional
+
 import torch
 from torch import Tensor
 from torch.nn import (
     Module, 
     Sequential,
     Conv2d,
-    Upsample,
+    GroupNorm,
+    BatchNorm2d,
+    ConvTranspose2d,
 )
 
 from neural_nets.conv_block import SeparableInvertResidual
-
 from neural_nets.activations import get_activation
+
+from utils.initializers import _get_initializer, ones_
 
 
 class DownBlock(Module):
@@ -18,63 +23,85 @@ class DownBlock(Module):
         in_channels: int, 
         out_channels: int, 
         expand_factor: int = 3,
-        num_groups_norm: int = 4,
+        drop_p: float = 0.3,
         activation: str = "hardswish",
+        initializer: str | Callable[[Tensor], Tensor] = "he_uniform",
         device=None,
         dtype=None,
+        *args,
+        **kwargs
     ):  
-        r"""
-        Downsample block of lightweight UNet
+        """
+        Downsample block of lightweight Encoder
 
         Args:
             in_channels (int): input channels
             out_channels (int): output channels
             expand_factor (int, optional): Expand factor used in expansion conv layer
                 of inverted residual block . Defaults to 3.
-            num_groups_norm (int, optional): Number of group to be normalized by group norm. 
-                Defaults to 4.
+            drop_p (float, optional): Dropout rate. Defaults to 0.3.
             activation (str, optional): Activation function. Defaults to "hardswish".
         """
         super().__init__()
         
         invert_residual_kwargs = {
             "expand_factor": expand_factor, 
-            "num_groups_norm": num_groups_norm, 
-            "activation": activation
+            "drop_p": drop_p,
+            "activation": activation,
+            "initializer": initializer
         }
         factory_kwargs = {"device": device, "dtype": dtype}
+        self.initializer = _get_initializer(initializer)
         
-        layers = [        
-            Conv2d(
-                in_channels, 
-                in_channels,
-                kernel_size=3,
-                stride=2,
-                padding=(1, 1),
-                groups=in_channels,
-                **factory_kwargs
-            ),
-            get_activation(activation),
+        layers = [                         
+            # conv for downsampling 
             Conv2d(
                 in_channels, 
                 out_channels,
-                kernel_size=1,
+                kernel_size=3,
+                stride=2,
+                padding=(1, 1),
+                bias=False,
                 **factory_kwargs
             ),
+            BatchNorm2d(out_channels, **factory_kwargs),
             get_activation(activation),
-            
-            SeparableInvertResidual(out_channels, out_channels, **invert_residual_kwargs, **factory_kwargs),
-            SeparableInvertResidual(out_channels, out_channels, **invert_residual_kwargs, **factory_kwargs),
+            #
+            SeparableInvertResidual(
+                out_channels, 
+                out_channels, 
+                **invert_residual_kwargs, 
+                **factory_kwargs
+            ),
+            #
+            Conv2d(
+                out_channels, 
+                out_channels,
+                kernel_size=3,
+                padding=(1, 1),
+                bias=False,
+                **factory_kwargs
+            ),
+            BatchNorm2d(out_channels, **factory_kwargs),
+            get_activation(activation),
         ]
-            
         self.layers = Sequential(*layers)
+        self._reset_parameters()
+        
+        
+    def _reset_parameters(self):
+        for layer in self.layers:
+            if isinstance(layer, Conv2d):    
+                self.initializer(layer.weight)
+                if layer.bias is not None:
+                    ones_(layer.bias)
 
 
     def forward(
         self, 
         input: Tensor
     ) -> Tensor:
-        r"""
+        """
         Forward method of Down block
 
         Args:
@@ -93,44 +120,74 @@ class UpBlock(Module):
         in_channels: int, 
         out_channels: int, 
         expand_factor: int = 3,
-        num_groups_norm: int = 4,
+        drop_p: float = 0.3,
         activation: str = "hardswish",
+        initializer: str | Callable[[Tensor], Tensor] = "he_uniform",
         device=None,
         dtype=None,
     ):  
+        """
+        Upsamole block of lightweight Decoder
+
+        Args:
+            in_channels (int): input channels
+            out_channels (int): output channels
+            expand_factor (int, optional): Expand factor used in expansion conv layer
+                of inverted residual block . Defaults to 3.
+            drop_p (float, optional): Dropout rate. Defaults to 0.3.
+            activation (str, optional): Activation function. Defaults to "hardswish".
+        """
         super().__init__()
-        
         invert_residual_kwargs = {
             "expand_factor": expand_factor, 
-            "num_groups_norm": num_groups_norm, 
-            "activation": activation
+            "drop_p": drop_p,
+            "activation": activation,
+            "initializer": initializer
         }
         factory_kwargs = {"device": device, "dtype": dtype}
+        self.initializer = _get_initializer(initializer)
         
-        layers = [
-            Conv2d(
-                in_channels, 
-                out_channels,
-                kernel_size=1,
+        layers = [            
+            ConvTranspose2d(
+                in_channels,
+                in_channels,
+                kernel_size=2,
+                stride=2,
+                padding=(0, 0),
+                bias=False,
                 **factory_kwargs
             ),
+            BatchNorm2d(in_channels, **factory_kwargs),
             get_activation(activation),
+            #
+            SeparableInvertResidual(
+                in_channels, 
+                in_channels, 
+                **invert_residual_kwargs, 
+                **factory_kwargs
+            ),
+            #
             Conv2d(
-                in_channels=out_channels, 
-                out_channels=out_channels,
+                in_channels,
+                out_channels,
                 kernel_size=3,
                 padding=(1, 1),
-                groups=out_channels,
+                bias=False,
                 **factory_kwargs
             ),
-            get_activation(activation),
-            
-            Upsample(scale_factor=2, mode="bilinear"),
-            SeparableInvertResidual(out_channels, out_channels, **invert_residual_kwargs, **factory_kwargs),
-            SeparableInvertResidual(out_channels, out_channels, **invert_residual_kwargs, **factory_kwargs),
+            BatchNorm2d(out_channels, **factory_kwargs),
+            get_activation(activation)
         ]
-            
         self.layers = Sequential(*layers)
+        self._reset_parameters()
+        
+
+    def _reset_parameters(self):
+        for layer in self.layers:
+            if isinstance(layer, (Conv2d, ConvTranspose2d)):    
+                self.initializer(layer.weight)
+                if layer.bias is not None:
+                    ones_(layer.bias)
 
 
     def forward(
