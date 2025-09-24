@@ -61,7 +61,7 @@ For modifying the backbone of a specific Diffusion Model, you can modify the con
 Each file has the template like this:
 
 ```yaml
-NAME: "<NAME OF VAE MODEL>"
+NAME: "<NAME OF DIFF MODEL>"
 
 
 IMG_CHANNELS: 3
@@ -72,12 +72,13 @@ LATENT_DIM: ...
 
 BACKBONE_CONFIGS:
   stages_channels: [32, 64, 128, 256]
-  is_conditional: False
-  T: 100
-  t_embed_dim: 64
-  expand_factor: 3
+  expand_factor: 2
   drop_p: ...
+  T: 120
+  beta: 0.25
+  t_embed_dim: 32
   activation: "<name of activation>"
+  base_groups_norm: 4
   initializer: "<name of initializer>"
   dtype: null
   ...
@@ -90,10 +91,6 @@ OPTIM_KWARGS:
   weight_decay: 0
   ...
 
-
-LOGGING_KWARGS:
-  save_dir: ./weights
-  ...
 ```
 
 
